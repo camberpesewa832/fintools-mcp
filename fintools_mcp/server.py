@@ -18,6 +18,9 @@ from fintools_mcp.indicators.atr import compute_atr
 from fintools_mcp.indicators.ema import compute_ema
 from fintools_mcp.indicators.fibonacci import Fibonacci
 from fintools_mcp.analysis.position_sizer import calculate_position, atr_based_position
+from fintools_mcp.analysis.screener import screen, SP500_TOP, MAJOR_ETFS
+from fintools_mcp.analysis.trend_score import compute_trend_score
+from fintools_mcp.analysis.support_resistance import find_support_resistance
 from fintools_mcp.analysis.trade_stats import compute_trade_stats
 
 mcp = FastMCP(
@@ -433,6 +436,179 @@ def compare_tickers(
         })
 
     return json.dumps({"comparison": results, "period": period}, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Tool 7: Stock Screener
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def screen_stocks(
+    rsi_max: float | None = None,
+    rsi_min: float | None = None,
+    trend_min: float | None = None,
+    trend_max: float | None = None,
+    above_200ema: bool | None = None,
+    above_50ema: bool | None = None,
+    min_relative_volume: float | None = None,
+    universe: str = "sp500",
+    tickers: list[str] | None = None,
+    max_results: int = 15,
+) -> str:
+    """Screen stocks against technical criteria — find oversold bounces, trending stocks, volume spikes, etc.
+
+    Scans the S&P 500 top 100 (or custom tickers) and filters by RSI, trend score, EMA position, and relative volume.
+    Each stock gets a Trend Score from -100 (strong downtrend) to +100 (strong uptrend).
+
+    Args:
+        rsi_max: Maximum RSI to filter for oversold stocks (e.g. 30)
+        rsi_min: Minimum RSI to filter for overbought stocks (e.g. 70)
+        trend_min: Minimum trend score (e.g. 15 for uptrend, 40 for strong uptrend)
+        trend_max: Maximum trend score (e.g. -15 for downtrend, -40 for strong downtrend)
+        above_200ema: If true, only stocks above 200-day EMA
+        above_50ema: If true, only stocks above 50-day EMA
+        min_relative_volume: Minimum relative volume vs 20-day avg (e.g. 1.5 = 50% above average)
+        universe: "sp500" (top 100 by market cap) or "etfs" (sector + index ETFs)
+        tickers: Custom list of tickers to screen (overrides universe)
+        max_results: Maximum results to return (default 15)
+    """
+    results = screen(
+        tickers=tickers,
+        universe=universe,
+        rsi_max=rsi_max,
+        rsi_min=rsi_min,
+        trend_min=trend_min,
+        trend_max=trend_max,
+        above_200ema=above_200ema,
+        above_50ema=above_50ema,
+        min_relative_volume=min_relative_volume,
+        max_results=max_results,
+    )
+
+    if not results:
+        return json.dumps({"matches": 0, "message": "No stocks matched the criteria"})
+
+    output = {
+        "matches": len(results),
+        "criteria": {
+            k: v for k, v in {
+                "rsi_max": rsi_max,
+                "rsi_min": rsi_min,
+                "trend_min": trend_min,
+                "trend_max": trend_max,
+                "above_200ema": above_200ema,
+                "above_50ema": above_50ema,
+                "min_relative_volume": min_relative_volume,
+                "universe": universe if not tickers else f"custom ({len(tickers)} tickers)",
+            }.items() if v is not None
+        },
+        "results": [asdict(r) for r in results],
+    }
+
+    return json.dumps(output, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Tool 8: Support & Resistance Levels
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def get_support_resistance(
+    ticker: str,
+    lookback: int = 120,
+    max_levels: int = 5,
+) -> str:
+    """Find key support and resistance levels for a stock from swing highs/lows.
+
+    Detects pivot points, clusters nearby levels, counts touches, and ranks by strength.
+
+    Args:
+        ticker: Stock symbol (e.g. AAPL, SPY)
+        lookback: Number of daily bars to analyze (default 120 = ~6 months)
+        max_levels: Maximum levels per side — support and resistance (default 5)
+    """
+    bars = fetch_bars(ticker, period="1y", interval="1d")
+    if not bars or len(bars) < 20:
+        return f"Not enough data for {ticker}"
+
+    highs = [b.high for b in bars]
+    lows = [b.low for b in bars]
+    closes = [b.close for b in bars]
+    current_price = closes[-1]
+
+    levels = find_support_resistance(
+        highs, lows, closes, current_price,
+        lookback=lookback, max_levels=max_levels,
+    )
+
+    support = [l for l in levels if l.level_type == "support"]
+    resistance = [l for l in levels if l.level_type == "resistance"]
+
+    result = {
+        "ticker": ticker.upper(),
+        "price": round(current_price, 2),
+        "support_levels": [asdict(l) for l in support],
+        "resistance_levels": [asdict(l) for l in resistance],
+        "nearest_support": round(support[0].price, 2) if support else None,
+        "nearest_resistance": round(resistance[0].price, 2) if resistance else None,
+    }
+
+    return json.dumps(result, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Tool 9: Trend Score
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def get_trend_score(
+    ticker: str,
+) -> str:
+    """Get a graduated trend score (-100 to +100) for a stock.
+
+    Combines 5 daily indicators: close vs SMA20 (25%), close vs SMA50 (25%),
+    SMA20 slope (20%), ADX direction (15%), and position in 20-day range (15%).
+
+    Classifications: strong_uptrend (>=40), uptrend (>=15), neutral (-15 to +15),
+    downtrend (<=-15), strong_downtrend (<=-40).
+
+    Args:
+        ticker: Stock symbol (e.g. AAPL, SPY)
+    """
+    bars = fetch_bars(ticker, period="1y", interval="1d")
+    if not bars or len(bars) < 50:
+        return f"Not enough data for {ticker}"
+
+    highs = [b.high for b in bars]
+    lows = [b.low for b in bars]
+    closes = [b.close for b in bars]
+
+    ts = compute_trend_score(highs, lows, closes)
+    if not ts:
+        return f"Could not compute trend score for {ticker}"
+
+    result = {
+        "ticker": ticker.upper(),
+        "price": round(closes[-1], 2),
+        "trend_score": round(ts.score, 1),
+        "classification": ts.classification,
+        "components": {
+            "close_vs_sma20": round(ts.close_vs_sma20, 1),
+            "close_vs_sma50": round(ts.close_vs_sma50, 1),
+            "sma20_slope": round(ts.sma20_slope, 1),
+            "adx_direction": round(ts.adx_direction, 1),
+            "range_position": round(ts.range_position, 1),
+        },
+        "values": {
+            "sma20": round(ts.sma20, 2),
+            "sma50": round(ts.sma50, 2) if ts.sma50 else None,
+            "adx": round(ts.adx, 1) if ts.adx else None,
+            "plus_di": round(ts.plus_di, 1) if ts.plus_di else None,
+            "minus_di": round(ts.minus_di, 1) if ts.minus_di else None,
+        },
+    }
+
+    return json.dumps(result, indent=2)
 
 
 # ---------------------------------------------------------------------------

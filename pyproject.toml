@@ -1,6 +1,6 @@
 [project]
 name = "fintools-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "Financial analysis tools for AI assistants — technical indicators, options analysis, position sizing, and trade analytics via MCP"
 readme = "README.md"
 requires-python = ">=3.10"
