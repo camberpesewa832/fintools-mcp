@@ -612,6 +612,106 @@ def get_trend_score(
 
 
 # ---------------------------------------------------------------------------
+# Tool: Find Breakouts
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def find_breakouts(
+    exclude_symbols: str = "",
+    min_trend_score: float = 30.0,
+    min_rsi: float = 45.0,
+    max_rsi: float = 75.0,
+    max_results: int = 15,
+) -> str:
+    """Scan S&P 500 top 100 for breakout candidates — stocks in strong uptrends with bullish EMA stacks.
+
+    Finds stocks the V3 breakout engine should be watching. Filters for:
+    - Strong trend score (default >= 30)
+    - RSI in momentum range (45-75, not overbought or oversold)
+    - Price above both 50 and 200 EMA (bullish structure)
+    - Sorted by trend score (strongest first)
+
+    Args:
+        exclude_symbols: Comma-separated symbols to exclude (e.g. existing watchlist)
+        min_trend_score: Minimum trend score (default 30)
+        min_rsi: Minimum RSI (default 45)
+        max_rsi: Maximum RSI — avoid overbought (default 75)
+        max_results: Max results to return (default 15)
+    """
+    exclude = set(s.strip().upper() for s in exclude_symbols.split(",") if s.strip())
+
+    results = screen(
+        universe="sp500",
+        trend_min=min_trend_score,
+        above_50ema=True,
+        above_200ema=True,
+        max_results=100,
+    )
+
+    # Apply RSI filter and exclusion
+    filtered = []
+    for r in results:
+        if r.ticker in exclude:
+            continue
+        if r.rsi is not None and (r.rsi < min_rsi or r.rsi > max_rsi):
+            continue
+        filtered.append(r)
+
+    # Compute EMA phase for each
+    output = []
+    for r in filtered[:max_results]:
+        try:
+            bars = fetch_bars(r.ticker, period="6mo", interval="1d")
+            if not bars or len(bars) < 50:
+                continue
+            closes = [b.close for b in bars]
+            ema9 = compute_ema(closes, 9)
+            ema21 = compute_ema(closes, 21)
+            ema50 = compute_ema(closes, 50)
+            price = closes[-1]
+
+            if price > ema9 and ema9 > ema21 and ema21 > ema50:
+                ema_phase = "4-FULL BULLISH"
+            elif price > ema9 and ema9 > ema21:
+                ema_phase = "3-TRANSITION"
+            elif price > ema9:
+                ema_phase = "2-BOUNCE"
+            else:
+                ema_phase = "1-BEARISH"
+
+            output.append({
+                "ticker": r.ticker,
+                "price": r.price,
+                "trend_score": r.trend_score,
+                "trend_class": r.trend_class,
+                "rsi": r.rsi,
+                "ema_phase": ema_phase,
+                "above_50ema": r.above_50ema,
+                "above_200ema": r.above_200ema,
+                "change_3mo": r.change_pct_3mo,
+                "relative_volume": r.relative_volume,
+                "atr": r.atr,
+            })
+        except Exception:
+            continue
+
+    summary = {
+        "scan_date": "live",
+        "universe": "S&P 500 top 100",
+        "filters": {
+            "min_trend_score": min_trend_score,
+            "rsi_range": f"{min_rsi}-{max_rsi}",
+            "above_50_and_200_ema": True,
+            "excluded": list(exclude) if exclude else "none",
+        },
+        "results_count": len(output),
+        "breakout_candidates": output,
+    }
+
+    return json.dumps(summary, indent=2)
+
+
+# ---------------------------------------------------------------------------
 # Tool: Option Quote
 # ---------------------------------------------------------------------------
 
